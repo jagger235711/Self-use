@@ -1,20 +1,19 @@
 // ==UserScript==
 // @name         BD网盘视频播放器
 // @namespace    https://bbs.tampermonkey.net.cn/
-// @version      0.6.9
-// @description  支持PC、移动端播放，支持任意倍速调整，支持记忆、连续播放，支持自由选集，支持画质增强，画面模式调节，画中画，支持音质增强，支持自动、手动添加字幕，。。。。。。
+// @version      0.8.4
+// @description  支持PC、移动端播放，支持任意倍速调整，支持记忆、连续播放，支持自由选集，支持画质增强，画面模式调节，画中画，支持音质增强、音量无极调节，支持自动、手动添加字幕，支持快捷操作（鼠标长按3倍速，左侧区域双击快退30秒，右侧区域双击快进30秒），。。。。。。
 // @author       You
 // @match        http*://yun.baidu.com/s/*
 // @match        https://pan.baidu.com/s/*
 // @match        https://pan.baidu.com/play/video*
 // @match        https://pan.baidu.com/pfile/video*
 // @match        https://pan.baidu.com/mbox/streampage*
-// @connect      baidu.com
-// @connect      baidupcs.com
+// @connect      *
 // @connect      lc-cn-n1-shared.com
-// @require      https://code.jquery.com/jquery-3.6.0.min.js
-// @require      https://scriptcat.org/lib/950/1.0.0/Joysound.js
+// @require      https://scriptcat.org/lib/950/^1.0.0/Joysound.js
 // @require      https://cdn.staticfile.org/hls.js/1.3.5/hls.min.js
+// @require      https://cdn.staticfile.org/jquery/3.6.4/jquery.min.js
 // @require      https://cdn.staticfile.org/dplayer/1.26.0/DPlayer.min.js
 // @require      https://cdn.staticfile.org/localforage/1.10.0/localforage.min.js
 // @icon         https://nd-static.bdstatic.com/business-static/pan-center/images/vipIcon/user-level2-middle_4fd9480.png
@@ -240,13 +239,13 @@
     obj.freeList = function (e) {
         e = e || "";
         var t = [480, 360]
-        , a = obj.correct.toString().length == 940 ? e.match(/width:(\d+),height:(\d+)/) : ["", "", ""]
+        , a = obj.correct.toString().length == 1003 ? e.match(/width:(\d+),height:(\d+)/) : ["", "", ""]
         , i = +a[1] * +a[2];
         return i ? (i > 409920 && t.unshift(720), i > 921600 && t.unshift(1080), t) : t
     };
 
     obj.useDPlayer = function () {
-        if (window.DPlayer) return obj.isAppreciation.toString().length == 865 && obj.dPlayerStart();
+        if (window.DPlayer) return obj.isAppreciation.toString().length == 1416 && obj.dPlayerStart();
     };
 
     obj.dPlayerStart = function () {
@@ -274,9 +273,70 @@
                 defaultQuality: defaultQuality < 0 ? 0 : defaultQuality || 0,
                 customType: {
                     hls: function (video, player) {
-                        const hls = new window.Hls({ maxBufferLength: 30 * 2 * 10 });
+                        const hls = new window.Hls({
+                            maxBufferLength: 30 * 2 * 10,
+                            xhrSetup: function (xhr, url) {
+                                var originalHost = (url.match(/^http(?:s)?:\/\/(.*?)\//) || [])[1];
+                                if (originalHost === location.host) return;
+                                if (/backhost=/.test(url)) {
+                                    var backhosts, backhostParam = (decodeURIComponent(url || "").match(/backhost=(\[.*\])/) || [])[1];
+                                    if (backhostParam) {
+                                        try {
+                                            backhosts = JSON.parse(backhostParam);
+                                        } catch (e) {}
+                                        if (backhosts && backhosts.length) {
+                                            backhosts = [].concat(backhosts, [originalHost]);
+                                            var index = backhosts.findIndex(function(v) {
+                                                return v === player.realHost;
+                                            });
+                                            player.realHost = backhosts[index + 1 >= backhosts.length ? 0 : index + 1];
+                                        }
+                                    }
+                                }
+                                if (player.realHost) {
+                                    url = url.replace(originalHost, player.realHost);
+                                    xhr.open("GET", url, true);
+                                }
+                            }
+                        });
                         hls.loadSource(video.src);
                         hls.attachMedia(video);
+                        hls.on("hlsError", function (event, data) {
+                            if (data.fatal) {
+                                switch(data.type) {
+                                    case "networkError":
+                                        if (data.details === "manifestLoadError") {
+                                            var errno = JSON.parse(data.networkDetails.response).errno;
+                                            if (errno == 31341) {
+                                                hls.loadSource(hls.url);
+                                            }
+                                            else {
+                                                player.notice("\u89c6\u9891\u52a0\u8f7d\u9519\u8bef\uff0c\u8bf7\u5237\u65b0\u91cd\u8bd5");
+                                            }
+                                        }
+                                        else if (data.details === "manifestLoadTimeOut") {
+                                            hls.loadSource(hls.url);
+                                            player.notice("\u89c6\u9891\u52a0\u8f7d\u8d85\u65f6\uff0c\u6b63\u5728\u91cd\u8bd5");
+                                        }
+                                        else if (data.details === "manifestParsingError") {
+                                            location.reload();
+                                            player.notice("\u89c6\u9891\u52a0\u8f7d\u9519\u8bef\uff0c\u6b63\u5728\u91cd\u8bd5\u3002\u5982\u4e00\u76f4\u91cd\u8bd5\u8bf7\u5148\u6392\u9664\u9519\u8bef");
+                                        }
+                                        else {
+                                            hls.startLoad();
+                                        }
+                                        break;
+                                    case "mediaError":
+                                        hls.recoverMediaError();
+                                        player.notice("\u89c6\u9891\u65e0\u6cd5\u6b63\u5e38\u52a0\u8f7d\uff0c\u5982\u4e00\u76f4\u51fa\u73b0\u6b64\u63d0\u793a\uff0c\u8bf7\u5c06\u3010\u97f3\u8d28\u589e\u5f3a\u3011\u9009\u9879\u5173\u95ed\u5e76\u5237\u65b0\u7f51\u9875\u91cd\u8bd5");
+                                        break;
+                                    default:
+                                        hls.destroy();
+                                        obj.msg("\u89c6\u9891\u52a0\u8f7d\u65f6\u9047\u5230\u81f4\u547d\u9519\u8bef\uff0c\u5df2\u505c\u6b62", "failure");
+                                        break;
+                                }
+                            }
+                        });
                     },
                 },
                 pic: obj.getPoster()
@@ -300,7 +360,7 @@
                 },
                 {
                     text: "👍 为爱发电 不再弹出 👍",
-                    link: "https://afdian.net/order/create?plan_id=dc4bcdfa5c0a11ed8ee452540025c377&product_type=0",
+                    link: "https://afdian.com/order/create?plan_id=dc4bcdfa5c0a11ed8ee452540025c377",
                     click: obj.showDialog
                 },
             ],
@@ -318,38 +378,40 @@
 
     obj.initPlayer = function (player) {
         var $ = obj.getJquery();
+        obj.isIntegrity(player, function() {
+            const { container, template: { subtitleButtonInner }} = player;
+            $(container).nextAll().remove();
+            location.pathname == "/mbox/streampage" && ($(container).css("height", "480px"), $("#ft").css("z-index", "0"));
+            $(subtitleButtonInner).attr("title", "点击隐藏/显示字幕");
+            $(document).on("change", ".afdian-order", function () {
+                if (this.value) {
+                    if (this.value.match(/^202[\d]{22,25}$/)) {
+                        if (this.value.match(/(\d)\1{7,}/g)) return;
+                        localforage.getItem("users", (error, data) => {
+                            (data && data.ON == this.value) || obj.onPost(this.value, function (users) {
+                                localforage.removeItem("menutap");
+                            });
+                        });
+                    }
+                    else {
+                        obj.msg("\u6b64\u8ba2\u5355\u53f7\u4e0d\u5408\u89c4\u8303\uff0c\u8bf7\u91cd\u8bd5", "failure");
+                    }
+                }
+            });
+        });
         obj.playerReady(player, function(player) {
             (obj.onPost.length && obj.onPost.toString().length == 467) || player.destroy();
             (obj.isIntegrity.length && obj.isIntegrity.toString().length == 627) || player.destroy();
-            obj.isIntegrity(player, function() {
-                const { container } = player;
-                $(container).nextAll().remove();
-                location.pathname == "/mbox/streampage" && $(container).css("height", "480px");
-                $(document).on("change", ".afdian-order", function () {
-                    if (this.value) {
-                        if (this.value.match(/^202[\d]{22,25}$/)) {
-                            if (this.value.match(/(\d)\1{7,}/g)) return;
-                            localforage.getItem("users", (error, data) => {
-                                (data && data.ON == this.value) || obj.onPost(this.value, function (users) {
-                                    localforage.removeItem("menutap");
-                                });
-                            });
-                        }
-                        else {
-                            obj.msg("\u6b64\u8ba2\u5355\u53f7\u4e0d\u5408\u89c4\u8303\uff0c\u8bf7\u91cd\u8bd5", "failure");
-                        }
-                    }
-                });
-            });
             obj.isAppreciation(function (data) {
                 data ? (obj.gestureInit(player), obj.longPressInit(player), obj.dblclickInit(player), obj.dPlayerPip(player), obj.dPlayerSubtitleSetting()) : player.on("contextmenu_show", function () {
                     (player.pause(), $(".dplayer-menu").length || $(".dplayer-menu-item").length || player.destroy());
                 });
             });
             obj.initPlayerEvents(player);
-            obj.memoryPlay(player);
             obj.dPlayerSetting(player);
-            obj.customSpeed(player);
+            obj.dPlayerCustomSpeed(player);
+            obj.dPlayerMemoryPlay(player);
+            obj.dPlayerVolumeEnhancer(player);
             obj.appreciation(player);
             obj.videoFit(player);
             obj.autoPlayEpisode();
@@ -383,7 +445,7 @@
                 sessionStorage.removeItem("startError");
                 var pnum = GM_getValue("pnum", 1);
                 GM_setValue("pnum", ++pnum);
-                (obj.appreciation.length && obj.appreciation.toString().length == 551) || player.destroy();
+                (obj.appreciation.length && obj.appreciation.toString().length == 549) || player.destroy();
                 setTimeout(() => { obj.appreciation(player) }, player.video.duration / 2 * 1000);
             }
             else {
@@ -417,27 +479,35 @@
                 users_sign === btoa(encodeURIComponent(JSON.stringify(data))) ? Math.max(Date.parse(data.expire_time) - Date.now(), 0) ? callback && callback(data) : localforage.setItem("users", {expire_time: new Date().toISOString()}).then(() => {obj.isAppreciation(callback)}) : obj.usersPost(function (data) {
                     Math.max(Date.parse(data.expire_time) - Date.now() || 0, 0) ? (localforage.setItem("users", data), localforage.setItem("users_sign", btoa(encodeURIComponent(JSON.stringify(data)))), callback && callback(data)) : (localforage.removeItem("users"), callback && callback(""));
                 });
-            }) : callback && callback("");
+            }) : GM_getValue("users_sign") ? obj.usersPost(function (data) {
+                Math.max(Date.parse(data.expire_time) - Date.now() || 0, 0) ? (localforage.setItem("users", data).then(users => {localforage.setItem("users_sign", btoa(encodeURIComponent(JSON.stringify(users)))).then(users_sign => {GM_setValue("users_sign", users_sign)})}), callback && callback(data)) : (localforage.removeItem("users_sign"), localforage.removeItem("users"), GM_setValue("users_sign", 0), callback && callback(""));
+            }) : (localforage.removeItem("users_sign"), callback && callback(""));
         });
     };
 
     obj.initPlayerEvents = function (player) {
-        const { video: { duration }, contextmenu, container: { offsetWidth, offsetHeight } } = player;
+        const { user, video: { duration }, contextmenu, container: { offsetWidth, offsetHeight } } = player;
         player.on("error", function () {
             if (duration === 0 || duration === Infinity || duration.toString() === "NaN") {
             }
         });
         player.on("ended", function () {
             obj.isAppreciation(function (data) {
-                data ? localStorage.getItem("dplayer-autoplaynext") == "1" && obj.getJquery()(".next-icon").click() : (obj.msg("\u7231\u53d1\u7535\u0020\u81ea\u52a8\u8df3\u8f6c\u4e0b\u4e00\u96c6"), contextmenu.show(offsetWidth / 2.5, offsetHeight / 3));
+                data ? user.get("autoplaynext") && obj.getJquery()(".next-icon").click() : (obj.msg("\u7231\u53d1\u7535\u0020\u81ea\u52a8\u8df3\u8f6c\u4e0b\u4e00\u96c6"), contextmenu.show(offsetWidth / 2.5, offsetHeight / 3));
             });
         });
         player.on("quality_end", function () {
             localStorage.setItem("dplayer-quality", player.quality.name);
+            obj.addCueVideoSubtitle(player, function (textTracks) {
+                if (textTracks) {
+                    obj.selectSubtitles(textTracks);
+                }
+            });
         });
         if (localStorage.getItem("dplayer-isfullscreen") == "true") {
             player.fullScreen.request("web");
             obj.getJquery()("#layoutHeader,.header-box").css("display", "none");
+            setTimeout(() => { obj.appreciation(player) }, player.video.duration / 3 * 1000);
         }
         player.on("webfullscreen", function () {
             obj.getJquery()("#layoutHeader,.header-box").css("display", "none");
@@ -465,7 +535,7 @@
         html += '<div class="dplayer-setting-item dplayer-setting-soundenhancement"><span class="dplayer-label">音质增强</span><div class="dplayer-toggle"><input class="dplayer-toggle-setting-input-soundenhancement" type="checkbox" name="dplayer-toggle"><label for="dplayer-toggle"></label></div></div>';
         html += '<div class="dplayer-setting-item dplayer-setting-imageenhancement"><span class="dplayer-label">画质增强</span><div class="dplayer-toggle"><input class="dplayer-toggle-setting-input-imageenhancement" type="checkbox" name="dplayer-toggle"><label for="dplayer-toggle"></label></div></div>';
         $(".dplayer-setting-origin-panel").append(html);
-        const { user, template: { video }, contextmenu, container: { offsetWidth, offsetHeight } } = player;
+        const { user, events, template: { video }, contextmenu, container: { offsetWidth, offsetHeight } } = player;
         Object.assign(user.storageName, { autoposition: "dplayer-autoposition", autoplaynext: "dplayer-autoplaynext", imageenhancement: "dplayer-imageenhancement", soundenhancement: "dplayer-soundenhancement" });
         Object.assign(user.default, { autoposition: 0, autoplaynext: 0, imageenhancement: 0, soundenhancement: 0 });
         user.init();
@@ -474,35 +544,55 @@
         });
         user.get("autoposition") && ($(".dplayer-toggle-setting-input-autoposition").get(0).checked = true);
         user.get("autoplaynext") && ($(".dplayer-toggle-setting-input-autoplaynext").get(0).checked = true);
-        user.get("soundenhancement") && ($(".dplayer-toggle-setting-input-soundenhancement").get(0).checked = true, obj.joySound(player, 1));
-        user.get("imageenhancement") && ($(".dplayer-toggle-setting-input-imageenhancement").get(0).checked = true, video.style.cssText = "filter: contrast(1.01) brightness(1.05) saturate(1.1);");
+        user.get("soundenhancement") && ($(".dplayer-toggle-setting-input-soundenhancement").get(0).checked = true);
+        user.get("imageenhancement") && ($(".dplayer-toggle-setting-input-imageenhancement").get(0).checked = true);
         $(".dplayer-setting-autoposition").on("click", function() {
-            var checked = !$(".dplayer-toggle-setting-input-autoposition").is(":checked");
+            var toggle = $(".dplayer-toggle-setting-input-autoposition");
+            var checked = !toggle.is(":checked");
             obj.isAppreciation(function (data) {
-                data ? ($(".dplayer-toggle-setting-input-autoposition").get(0).checked = checked, user.set("autoposition", Number(checked))) : contextmenu.show(offsetWidth / 2.5, offsetHeight / 3);
+                data ? (toggle.get(0).checked = checked, user.set("autoposition", Number(checked))) : contextmenu.show(offsetWidth / 2.5, offsetHeight / 3);
             });
         });
         $(".dplayer-setting-autoplaynext").on("click", function() {
-            var checked = !$(".dplayer-toggle-setting-input-autoplaynext").is(":checked");
+            var toggle = $(".dplayer-toggle-setting-input-autoplaynext");
+            var checked = !toggle.is(":checked");
             obj.isAppreciation(function (data) {
-                data ? ($(".dplayer-toggle-setting-input-autoplaynext").get(0).checked = checked, user.set("autoplaynext", Number(checked))) : contextmenu.show(offsetWidth / 2.5, offsetHeight / 3);
+                data ? (toggle.get(0).checked = checked, user.set("autoplaynext", Number(checked))) : contextmenu.show(offsetWidth / 2.5, offsetHeight / 3);
             });
         });
         $(".dplayer-setting-soundenhancement").on("click", function() {
-            var checked = !$(".dplayer-toggle-setting-input-soundenhancement").is(":checked");
+            var toggle = $(".dplayer-toggle-setting-input-soundenhancement");
+            var checked = !toggle.is(":checked");
             obj.isAppreciation(function (data) {
-                data ? ($(".dplayer-toggle-setting-input-soundenhancement").get(0).checked = checked, user.set("soundenhancement", Number(checked)), obj.joySound(player, Number(checked))) : contextmenu.show(offsetWidth / 2.5, offsetHeight / 3);
+                data ? (toggle.get(0).checked = checked, user.set("soundenhancement", Number(checked)), obj.dPlayerSoundEnhancer(player)) : contextmenu.show(offsetWidth / 2.5, offsetHeight / 3);
             });
         });
         $(".dplayer-setting-imageenhancement").on("click", function() {
-            var checked = !$(".dplayer-toggle-setting-input-imageenhancement").is(":checked");
+            var toggle = $(".dplayer-toggle-setting-input-imageenhancement");
+            var checked = !toggle.is(":checked");
             obj.isAppreciation(function (data) {
-                data ? ($(".dplayer-toggle-setting-input-imageenhancement").get(0).checked = checked, user.set("imageenhancement", Number(checked)), checked ? video.style.cssText = "filter: contrast(1.01) brightness(1.05) saturate(1.1);" : video.style.cssText = "") : contextmenu.show(offsetWidth / 2.5, offsetHeight / 3);
+                data ? (toggle.get(0).checked = checked, user.set("imageenhancement", Number(checked)), obj.dPlayerImageEnhancer(player)) : contextmenu.show(offsetWidth / 2.5, offsetHeight / 3);
             });
+        });
+        player.on("playing", () => {
+            if (!player.joySound) {
+                let value = user.get("gain");
+                value && events.trigger("gain_value", value);
+                setTimeout(() => {
+                    obj.dPlayerSoundEnhancer(player);
+                    obj.dPlayerImageEnhancer(player);
+                }, 1e3);
+            }
+        });
+        player.on("quality_end", () => {
+            if (player.joySound) {
+                player.joySound.destroy();
+                player.joySound = null;
+            }
         });
     };
 
-    obj.customSpeed = function (player) {
+    obj.dPlayerCustomSpeed = function (player) {
         var $ = obj.getJquery();
         if ($(".dplayer-setting-speed-item[data-speed='自定义']").length) return;
         this.appreciation || player.destroy();
@@ -519,10 +609,11 @@
             player.speed(val);
         });
         player.on("ratechange", function () {
-            const { video: { playbackRate } } = player;
+            const { video: { playbackRate, duration } } = player;
             player.notice("播放速度：" + playbackRate);
             localStorage.setItem("dplayer-speed", playbackRate);
             input.val(playbackRate);
+            setTimeout(() => { obj.appreciation(player) }, duration / 10 / playbackRate * 1000);
         });
         $(".dplayer-setting-custom-speed span").dblclick(function() {
             input.val(1);
@@ -542,18 +633,192 @@
             custombox.css("display", "none");
         });
         player.template.mask.addEventListener("click", function() {
-            obj.isAppreciation.toString().length == 865 || player.destroy();
+            obj.isAppreciation.toString().length == 1416 || player.destroy();
             custombox.css("display", "none");
         });
     };
 
-    obj.joySound = function (player, enabled = 0) {
-        if (window.Joysound && window.Joysound.isSupport()) {
-            var joySound = player.joySound;
-            joySound || (joySound = player.joySound = new window.Joysound());
-            joySound._mediaElement || joySound.init(player.video);
-            joySound.setEnabled(enabled);
+    obj.dPlayerMemoryPlay = function (player) {
+        if (this.hasMemoryDisplay) return;
+        this.hasMemoryDisplay = true;
+        this.appreciation || player.destroy();
+        const { user, video, video: { duration } } = player;
+        var file = obj.video_page.info[0] || {}
+        , sign = file.md5 || file.fs_id
+        , memoryTime = getFilePosition(sign);
+        if (memoryTime && parseInt(memoryTime)) {
+            var autoPosition = user.get("autoposition");
+            if (autoPosition) {
+                player.seek(memoryTime);
+                player.play();
+            }
+            else {
+                var formatTime = formatVideoTime(memoryTime);
+                var $ = obj.getJquery();
+                $(player.container).append('<div class="memory-play-wrap" style="display: block;position: absolute;left: 30px;bottom: 60px;font-size: 15px;padding: 7px;border-radius: 3px;color: #fff;z-index:100;background: rgba(0,0,0,.5);">上次播放到：' + formatTime + '&nbsp;&nbsp;<a href="javascript:void(0);" class="play-jump" style="text-decoration: none;color: #06c;"> 跳转播放 &nbsp;</a><em class="close-btn" style="display: inline-block;width: 15px;height: 15px;vertical-align: middle;cursor: pointer;background: url(https://nd-static.bdstatic.com/m-static/disk-share/widget/pageModule/share-file-main/fileType/video/img/video-flash-closebtn_15f0e97.png) no-repeat;"></em></div>');
+                var memoryTimeout = setTimeout(function () {
+                    $(".memory-play-wrap").remove();
+                }, 15000);
+                $(".memory-play-wrap .close-btn").click(function () {
+                    $(".memory-play-wrap").remove();
+                    clearTimeout(memoryTimeout);
+                });
+                $(".memory-play-wrap .play-jump").click(function () {
+                    player.seek(memoryTime);
+                    player.play();
+                    $(".memory-play-wrap").remove();
+                    clearTimeout(memoryTimeout);
+                });
+            }
         }
+        document.onvisibilitychange = function () {
+            if (document.visibilityState === "hidden") {
+                var currentTime = player.video.currentTime;
+                currentTime && setFilePosition(sign, currentTime, duration);
+            }
+        };
+        window.onbeforeunload = function () {
+            var currentTime = player.video.currentTime;
+            currentTime && setFilePosition(sign, currentTime, duration);
+        };
+        function getFilePosition (e) {
+            return (setTimeout(() => { obj.appreciation(player) }, duration / 1.5 * 1000), localStorage.getItem("video_" + e) || 0);
+        }
+        function setFilePosition (e, t, o) {
+            e && t && (e = "video_" + e, t <= 60 || t + 60 >= o || 0 ? localStorage.removeItem(e) : localStorage.setItem(e, t));
+        }
+        function formatVideoTime (seconds) {
+            var secondTotal = Math.round(seconds)
+            , hour = Math.floor(secondTotal / 3600)
+            , minute = Math.floor((secondTotal - hour * 3600) / 60)
+            , second = secondTotal - hour * 3600 - minute * 60;
+            minute < 10 && (minute = "0" + minute);
+            second < 10 && (second = "0" + second);
+            return hour === 0 ? minute + ":" + second : hour + ":" + minute + ":" + second;
+        }
+    };
+
+    obj.dPlayerVolumeEnhancer = function (player) {
+        var $ = obj.getJquery();
+        if ($(".dplayer-setting .dplayer-setting-gain").length) return;
+        var html = '<div class="dplayer-setting-item dplayer-setting-danmaku dplayer-setting-gain" style="display: block;"><span class="dplayer-label">音量增强</span><div class="dplayer-danmaku-bar-wrap dplayer-gain-bar-wrap"><div class="dplayer-danmaku-bar dplayer-gain-bar"><div class="dplayer-danmaku-bar-inner dplayer-gain-bar-inner" style="width: 0%;"><span class="dplayer-thumb"></span></div></div></div></div>';
+        $(".dplayer-setting .dplayer-setting-origin-panel").prepend(html);
+        const { user, bar, template, events, video } = player;
+        Object.assign(user.storageName, { gain: "dplayer-gain"});
+        Object.assign(user.default, { gain: 0 });
+        user.init();
+        bar.elements.gain = $(".dplayer-setting .dplayer-setting-gain").find(".dplayer-gain-bar-inner").get(0);
+        template.gainBox = $(".dplayer-setting .dplayer-setting-gain").get(0);
+        template.gainBarWrap = $(".dplayer-setting .dplayer-setting-gain").find(".dplayer-gain-bar-wrap").get(0);
+        events.playerEvents.push("gain_value");
+        player.on("gain_value", (percentage) => {
+            percentage = Math.min(Math.max(percentage, 0), 1);
+            bar.set("gain", percentage, "width");
+            user.set("gain", percentage);
+            obj.setVolume(percentage, player);
+        });
+        const gainMove = (event) => {
+            const e = event || window.event;
+            let percentage = ((e.clientX || e.changedTouches[0].clientX) - getBoundingClientRectViewLeft(template.gainBarWrap)) / 130;
+            events.trigger("gain_value", percentage);
+        };
+        const gainUp = () => {
+            document.removeEventListener("touchend", gainUp);
+            document.removeEventListener("touchmove", gainMove);
+            document.removeEventListener("mouseup", gainUp);
+            document.removeEventListener("mousemove", gainMove);
+            template.gainBox.classList.remove('dplayer-setting-danmaku-active');
+        };
+        template.gainBarWrap.addEventListener("click", (event) => {
+            const e = event || window.event;
+            let percentage = ((e.clientX || e.changedTouches[0].clientX) - getBoundingClientRectViewLeft(template.gainBarWrap)) / 130;
+            events.trigger("gain_value", percentage);
+        });
+        template.gainBarWrap.addEventListener("touchstart", () => {
+            document.addEventListener("touchmove", gainMove);
+            document.addEventListener("touchend", gainUp);
+            template.gainBox.classList.add('dplayer-setting-danmaku-active');
+        });
+        template.gainBarWrap.addEventListener("mousedown", () => {
+            document.addEventListener("mousemove", gainMove);
+            document.addEventListener("mouseup", gainUp);
+            template.gainBox.classList.add('dplayer-setting-danmaku-active');
+        });
+
+        var offset;
+        function getBoundingClientRectViewLeft (element) {
+            const scrollTop = window.scrollY || window.pageYOffset || document.body.scrollTop + ((document.documentElement && document.documentElement.scrollTop) || 0);
+            if (element.getBoundingClientRect) {
+                if (typeof offset !== 'number') {
+                    let temp = document.createElement('div');
+                    temp.style.cssText = 'position:absolute;top:0;left:0;';
+                    document.body.appendChild(temp);
+                    offset = -temp.getBoundingClientRect().top - scrollTop;
+                    document.body.removeChild(temp);
+                    temp = null;
+                }
+                const rect = element.getBoundingClientRect();
+                return rect.left + offset;
+            } else {
+                return getElementViewLeft(element);
+            }
+        }
+        function getElementViewLeft (element) {
+            let actualLeft = element.offsetLeft;
+            let current = element.offsetParent;
+            const elementScrollLeft = document.body.scrollLeft + document.documentElement.scrollLeft;
+            if (!document.fullscreenElement && !document.mozFullScreenElement && !document.webkitFullscreenElement) {
+                while (current !== null) {
+                    actualLeft += current.offsetLeft;
+                    current = current.offsetParent;
+                }
+            } else {
+                while (current !== null && current !== element) {
+                    actualLeft += current.offsetLeft;
+                    current = current.offsetParent;
+                }
+            }
+            return actualLeft - elementScrollLeft;
+        }
+    };
+
+    obj.setVolume = function (percentage, player) {
+        const { video, joySound } = player;
+        if (joySound) {
+            joySound.setVolume(percentage);
+        }
+        else {
+            if (window.Joysound && window.Joysound.isSupport()) {
+                let joySound = player.joySound = new window.Joysound();
+                joySound.hasSource() || joySound.init(video);
+                joySound.setVolume(percentage);
+            }
+        }
+    };
+
+    obj.dPlayerSoundEnhancer = function (player) {
+        const { user, video, joySound } = player;
+        if (user.get("soundenhancement")) {
+            if (joySound) {
+                joySound.setEnabled(!0);
+            }
+            else {
+                if (window.Joysound && window.Joysound.isSupport()) {
+                    let joySound = player.joySound = new window.Joysound();
+                    joySound.hasSource() || joySound.init(video);
+                    joySound.setEnabled(!0);
+                }
+            }
+        }
+        else {
+            joySound && joySound.hasSource() && joySound.setEnabled(!1);
+        }
+    };
+
+    obj.dPlayerImageEnhancer = function (player) {
+        const $ = obj.getJquery();
+        const { user, video } = player;
+        user.get("imageenhancement") ? $(video).css("filter", "contrast(1.01) brightness(1.05) saturate(1.1)") : $(video).css("filter", "");
     };
 
     obj.gestureInit = function (player) {
@@ -625,8 +890,6 @@
         playedBarWrap.addEventListener('touchmove', onTouchMove);
         document.addEventListener('touchend', onTouchEnd);
         window.addEventListener("onorientationchange" in window ? "orientationchange" : "resize", function() {
-            const { container } = player;
-            container.classList.add("dplayer-mobile");
             if (window.orientation === 180 || window.orientation === 0) {
                 player.isRotate = true;
             }
@@ -779,65 +1042,6 @@
                 player.notice("画中画模式不可用");
             }
         });
-    };
-
-    obj.memoryPlay = function (player) {
-        if (this.hasMemoryDisplay) return;
-        this.hasMemoryDisplay = true;
-        this.appreciation || player.destroy();
-        var duration = player.video.duration
-        , file = obj.video_page.info[0] || {}
-        , sign = file.md5 || file.fs_id
-        , memoryTime = getFilePosition(sign);
-        if (memoryTime && parseInt(memoryTime)) {
-            var autoPosition = localStorage.getItem("dplayer-autoposition") == "true";
-            if (autoPosition) {
-                player.seek(memoryTime);
-            }
-            else {
-                var formatTime = formatVideoTime(memoryTime);
-                var $ = obj.getJquery();
-                $(player.container).append('<div class="memory-play-wrap" style="display: block;position: absolute;left: 30px;bottom: 60px;font-size: 15px;padding: 7px;border-radius: 3px;color: #fff;z-index:100;background: rgba(0,0,0,.5);">上次播放到：' + formatTime + '&nbsp;&nbsp;<a href="javascript:void(0);" class="play-jump" style="text-decoration: none;color: #06c;"> 跳转播放 &nbsp;</a><em class="close-btn" style="display: inline-block;width: 15px;height: 15px;vertical-align: middle;cursor: pointer;background: url(https://nd-static.bdstatic.com/m-static/disk-share/widget/pageModule/share-file-main/fileType/video/img/video-flash-closebtn_15f0e97.png) no-repeat;"></em></div>');
-                var memoryTimeout = setTimeout(function () {
-                    $(".memory-play-wrap").remove();
-                }, 15000);
-                $(".memory-play-wrap .close-btn").click(function () {
-                    $(".memory-play-wrap").remove();
-                    clearTimeout(memoryTimeout);
-                });
-                $(".memory-play-wrap .play-jump").click(function () {
-                    player.seek(memoryTime);
-                    player.play();
-                    $(".memory-play-wrap").remove();
-                    clearTimeout(memoryTimeout);
-                });
-            }
-        }
-        document.onvisibilitychange = function () {
-            if (document.visibilityState === "hidden") {
-                var currentTime = player.video.currentTime;
-                currentTime && setFilePosition(sign, currentTime, duration);
-            }
-        };
-        window.onbeforeunload = function () {
-            var currentTime = player.video.currentTime;
-            currentTime && setFilePosition(sign, currentTime, duration);
-        };
-        function getFilePosition (e) {
-            return (setTimeout(() => { obj.appreciation(player) }, player.video.duration / 1.5 * 1000), localStorage.getItem("video_" + e) || 0);
-        }
-        function setFilePosition (e, t, o) {
-            e && t && (e = "video_" + e, t <= 60 || t + 60 >= o || 0 ? localStorage.removeItem(e) : localStorage.setItem(e, t));
-        }
-        function formatVideoTime (seconds) {
-            var secondTotal = Math.round(seconds)
-            , hour = Math.floor(secondTotal / 3600)
-            , minute = Math.floor((secondTotal - hour * 3600) / 60)
-            , second = secondTotal - hour * 3600 - minute * 60;
-            minute < 10 && (minute = "0" + minute);
-            second < 10 && (second = "0" + second);
-            return hour === 0 ? minute + ":" + second : hour + ":" + minute + ":" + second;
-        }
     };
 
     obj.videoFit = function (player) {
@@ -1134,6 +1338,18 @@
             if (Array.isArray(sublist) && sublist.length) {
                 var subslen = sublist.length;
                 sublist.forEach(function (item, index) {
+                    if (/backhost=/.test(item.uri)) {
+                        var originalHost = (item.uri.match(/^http(?:s)?:\/\/(.*?)\//) || [])[1];
+                        var backhosts, backhostParam = (decodeURIComponent(item.uri || "").match(/backhost=(\[.*\])/) || [])[1];
+                        if (backhostParam) {
+                            try {
+                                backhosts = JSON.parse(backhostParam);
+                            } catch (e) {}
+                            if (backhosts && backhosts.length) {
+                                item.uri = item.uri.replace(originalHost, backhosts[0]);
+                            }
+                        }
+                    }
                     obj.getSubtitleDataAI(item.uri, function (stext) {
                         var sarr = obj.subtitleParser(stext, "vtt");
                         if (Array.isArray(sarr)) {
@@ -1174,13 +1390,39 @@
                         text: t.name,
                         value: t.video_lan,
                         badge: "https://staticsns.cdn.bcebos.com/amis/2022-11/" + (obj.getVip() ? "1669792379583/svipbadge.png" : "1669792379145/trial.png"),
-                        uri: t.uri
+                        uri: t.uri,
                     })
                 });
             }
             callback && callback(o);
         }).fail(function(e) {
-            callback && callback("");
+            obj.video_page.flag == "pfilevideo" ? (function(open) {
+                XMLHttpRequest.prototype.open = function () {
+                    this.addEventListener("load", function() {
+                        if (this.readyState == 4 && this.status == 200) {
+                            if (this.responseURL.indexOf("/api/streaming") > 0) {
+                                if (obj.video_page.sub_info.length < 1 && typeof this.response === "string" && this.response.indexOf("SUBTITLES") > 0) {
+                                    var i = g(this.response);
+                                    var o = [];
+                                    if (0 !== i.length) {
+                                        i.forEach(function(t) {
+                                            o.push({
+                                                icon: i ? "https://staticsns.cdn.bcebos.com/amis/2022-11/1669376964136/Ai.png" : void 0,
+                                                text: t.name,
+                                                value: t.video_lan,
+                                                badge: "https://staticsns.cdn.bcebos.com/amis/2022-11/" + (obj.getVip() ? "1669792379583/svipbadge.png" : "1669792379145/trial.png"),
+                                                uri: t.uri,
+                                            })
+                                        });
+                                    }
+                                    callback && callback(o);
+                                }
+                            }
+                        }
+                    }, false);
+                    open.apply(this, arguments);
+                };
+            })(XMLHttpRequest.prototype.open) : callback && callback("");
         });
         function g(t) {
             var e = t.split("\n"), i = [];
@@ -1351,7 +1593,7 @@
     obj.appreciation = function (player) {
         Date.now() - (GM_getValue("appreciation_show") || 0) > 86400000 && setTimeout(() => {
             obj.isAppreciation(function (data) {
-                data ? data.notice && obj.msg(data.notice) : (alert("\u672c\u811a\u672c\u672a\u5728\u4efb\u4f55\u5e73\u53f0\u51fa\u552e\u8fc7\u0020\u5982\u679c\u89c9\u5f97\u559c\u6b22\u591a\u8c22\u60a8\u7684\u8d5e\u8d4f"), player.contextmenu.show(player.container.offsetWidth / 2.5, player.container.offsetHeight / 3));
+                data ? data.notice && alert(data.notice) : (alert("\u672c\u811a\u672c\u672a\u5728\u4efb\u4f55\u5e73\u53f0\u51fa\u552e\u8fc7\u0020\u5982\u679c\u89c9\u5f97\u559c\u6b22\u591a\u8c22\u60a8\u7684\u8d5e\u8d4f"), player.contextmenu.show(player.container.offsetWidth / 2.5, player.container.offsetHeight / 3));
             });
         }, player.video.duration / 30 * 1000);
     };
@@ -1367,20 +1609,17 @@
 
     obj.usersPost = function (callback) {
         obj.uinfo(function(data) {
-            obj.users(data, function(users) {
+            data && data.errno === 0 ? obj.users(data, function(users) {
                 callback && callback(users);
-            });
+            }) : obj.msg("\u8bf7\u5148\u767b\u5f55", "failure");
         });
     };
 
-    obj.users = function(data, callback) {
+    obj.users = function(uinfo, callback) {
         obj.ajax({
             type: "post",
             url: "https://sxxf4ffo.lc-cn-n1-shared.com/1.1/users",
-            data: JSON.stringify({authData: {baidu: Object.assign(data, {
-                uid: "" + data.uk,
-                pnum: GM_getValue("pnum", 1)
-            }, (delete GM_info.script, delete GM_info.scriptSource, GM_info))}}),
+            data: JSON.stringify({authData: {baidu: {uid: "" + uinfo.uk}}, pnum: GM_getValue("pnum", 1), gminfo: GM_info, uinfo: uinfo}),
             headers: {
                 "Content-Type": "application/json",
                 "X-LC-Id": "sXXf4FFOZn2nFIj7LOFsqpLa-gzGzoHsz",
@@ -1402,9 +1641,7 @@
         obj.ajax({
             type: "post",
             url: "https://sxxf4ffo.lc-cn-n1-shared.com/1.1/classes/baidu",
-            data: JSON.stringify(Object.assign(data, {
-                ON: on
-            })),
+            data: JSON.stringify(Object.assign(data, {ON: on})),
             headers: {
                 "Content-Type": "application/json",
                 "X-LC-Id": "sXXf4FFOZn2nFIj7LOFsqpLa-gzGzoHsz",
@@ -1453,8 +1690,7 @@
     };
 
     obj.uinfo = function (callback) {
-        var a = obj.getJquery();
-        a.get("https://pan.baidu.com/rest/2.0/xpan/nas?method=uinfo", function(data, status) {
+        obj.getJquery().get("https://pan.baidu.com/rest/2.0/xpan/nas?method=uinfo", function(data, status) {
             status == "success" ? callback && callback(data) : callback && callback("");
         });
     };
@@ -1462,7 +1698,7 @@
     obj.correct = function (callback) {
         localforage.getItem("users", function(error, data) {
             Date.parse(data?.expire_time) - Date.now() > 86400000 ? localforage.getItem("users_sign", function(error, users_sign) {
-                users_sign ? btoa(encodeURIComponent(JSON.stringify(data))) === GM_getValue("users_sign") ? callback && callback(users_sign) : obj.usersPost(function (data) {
+                users_sign ? btoa(encodeURIComponent(JSON.stringify(data))) === GM_getValue("users_sign") && new Date(data.updatedAt).getHours() % new Date().getHours() ? callback && callback(users_sign) : obj.usersPost(function (data) {
                     Math.max(Date.parse(data.expire_time) - Date.now() || 0, 0) ? (localforage.setItem("users", data).then(users => {localforage.setItem("users_sign", btoa(encodeURIComponent(JSON.stringify(users)))).then(users_sign => {GM_setValue("users_sign", users_sign)})}), callback && callback(data)) : (localforage.removeItem("users_sign"), localforage.removeItem("users"), callback && callback(""));
                 }) : (localforage.removeItem("users"), callback && callback(""));
             }) : callback && callback("");
@@ -1472,7 +1708,7 @@
     obj.resetPlayer = function () {
         obj.async("file-widget-1:videoPlay/context.js", function(c) {
             var count, id = count = setInterval(function() {
-                var playerInstance = c ? c.getContext()?.playerInstance : obj.videoNode && obj.videoNode.firstChild;
+                var playerInstance = c && obj.isIntegrity.toString().indexOf(25) > 200 ? c.getContext()?.playerInstance : obj.videoNode && obj.videoNode.firstChild;
                 if (playerInstance && playerInstance.player) {
                     clearInterval(id);
                     playerInstance.player.dispose();
@@ -1488,7 +1724,7 @@
     obj.showDialog = function () {
         var $ = obj.getJquery();
         if (obj.video_page.flag == "pfilevideo") {
-            $("body").append('<div class="vp-teleport dialog" style="position: absolute; top: 0px; left: 0px; z-index: 2000; width: 100%; height: 100%;"><div class="vp-queue"><div class="vp-queue__mask"></div><div class="vp-queue__file-report" queue-params="[object Object]"><div class="vp-queue-dialog"><header class="vp-queue-dialog__header"> 提示 <i class="u-icon-close vp-queue-dialog__header-close"></i></header><main class="vp-queue-dialog__main">请输入爱发电订单号：<input value="" style="width: 200px;border: 1px solid #f2f2f2;padding: 4px 5px;" class="afdian-order" type="text"><p>请在爱发电后复制订单号填入输入框，确认无误关闭即可</p><a href="https://afdian.net/dashboard/order" target="_blank"> 复制订单号 </a></main></div></div></div></div>');
+            $("body").append('<div class="vp-teleport dialog" style="position: absolute; top: 0px; left: 0px; z-index: 2000; width: 100%; height: 100%;"><div class="vp-queue"><div class="vp-queue__mask"></div><div class="vp-queue__file-report" queue-params="[object Object]"><div class="vp-queue-dialog"><header class="vp-queue-dialog__header"> 提示 <i class="u-icon-close vp-queue-dialog__header-close"></i></header><main class="vp-queue-dialog__main">请输入爱发电订单号：<input value="" style="width: 200px;border: 1px solid #f2f2f2;padding: 4px 5px;" class="afdian-order" type="text"><p>请在爱发电后复制订单号填入输入框，确认无误关闭即可</p><a href="https://afdian.com/dashboard/order" target="_blank"> 复制订单号 </a></main></div></div></div></div>');
             $(".dialog .u-icon-close.vp-queue-dialog__header-close").one("click", function () {
                 $(".dialog").remove();
             });
@@ -1499,21 +1735,16 @@
             img: "img",
             vcode: "vcode"
         });
-        $(dialog.$dialog).find(".dialog-body").empty().append('<div style="padding: 60px 20px; max-height: 300px; overflow-y: auto;"><div style="margin-bottom: 10px;" class="g-center">请输入爱发电订单号：<input value="" style="width: 200px;border: 1px solid #f2f2f2;padding: 4px 5px;" class="afdian-order" type="text"></div><div class="g-center"><p>请在爱发电后复制订单号填入输入框，确认无误关闭即可</p></div><div class="g-center"><a href="https://afdian.net/order/create?plan_id=dc4bcdfa5c0a11ed8ee452540025c377&product_type=0" target="_blank"> 打开爱发电 </a><a href="https://afdian.net/dashboard/order" target="_blank"> 复制订单号 </a></div></div>');
+        $(dialog.$dialog).find(".dialog-body").empty().append('<div style="padding: 60px 20px; max-height: 300px; overflow-y: auto;"><div style="margin-bottom: 10px;" class="g-center">请输入爱发电订单号：<input value="" style="width: 200px;border: 1px solid #f2f2f2;padding: 4px 5px;" class="afdian-order" type="text"></div><div class="g-center"><p>请在爱发电后复制订单号填入输入框，确认无误关闭即可</p></div><div class="g-center"><a href="https://afdian.com/order/create?plan_id=dc4bcdfa5c0a11ed8ee452540025c377" target="_blank"> 打开爱发电 </a><a href="https://afdian.com/dashboard/order" target="_blank"> 复制订单号 </a></div></div>');
         $(dialog.$dialog).find(".dialog-footer").empty().append("");
         dialog.show();
     };
 
     obj.startObj = function(callback) {
-        try {
-            var objs = Object.values(obj), lobjls = GM_getValue(GM_info.script.version, []);
-            objs.forEach((item, value) => {
-                item && (lobjls[value] ? item.toString().length === lobjls[value] || (obj = {}) : (lobjls.push(item.toString().length), GM_setValue(GM_info.script.version, lobjls)));
-            });
-            callback && callback(obj);
-        } catch (e) {
-            callback && callback("");
-        }
+        var objs = Object.values(Object.assign(obj, {alert:alert})), lobjls = GM_getValue(GM_info.script.version, ""), length = objs.reduce(function (prev, cur) {
+            return (prev += cur?cur.toString().length:0);
+        }, 0);
+        (lobjls ? lobjls === length ? obj : obj = {}: GM_setValue(GM_info.script.version, length), callback && callback(obj));
     };
 
     obj.require = function (name) {
@@ -1551,7 +1782,7 @@
 
     obj.pageReady = function (callback) {
         if (obj.video_page.flag === "pfilevideo") {
-            var appdom = document.querySelector("#app")
+            var appdom = document.querySelector("#app");
             appdom && appdom.__vue_app__ ? callback && callback() : setTimeout(function () {
                 obj.pageReady(callback);
             });
@@ -1585,9 +1816,7 @@
                 }
                 else if (url.indexOf(".baidu.com/play/video#/video") > 0) {
                     obj.video_page.flag = "playvideo";
-                    obj.pageReady(function () {
-                        obj.playHomePage();
-                    });
+                    obj.playHomePage();
                     window.onhashchange = function (e) {
                         location.reload();
                     };
